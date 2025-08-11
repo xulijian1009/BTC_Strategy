@@ -1,3 +1,5 @@
+## 此高频量化策略使用GateAPI，强烈建议开通返佣再跑，https://www.gatesite.site/share/vlusul9fbw
+
 ## 1) 创建本地数据库（MySQL 8+）
 mysql -uroot -p -e "CREATE DATABASE quant DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 
