@@ -5,7 +5,7 @@ mysql -uroot -p -e "CREATE DATABASE quant DEFAULT CHARACTER SET utf8mb4 COLLATE 
 mysql -uroot -p quant < quant.sql
 
 ## 3) 复制并编辑 .env（将示例变量替换为你的本地配置）
-cp .env.example .env
+cp env.example .env
 
 ## 4) 创建并激活虚拟环境 + 安装依赖
 python -m venv .venv
