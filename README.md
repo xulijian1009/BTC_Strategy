@@ -3,7 +3,7 @@
 ## 1) 创建本地数据库（MySQL 8+）
 mysql -uroot -p -e "CREATE DATABASE quant DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 
-## 2) 导入建表脚本（确保 quant.sql 在仓库根目录）
+## 2) 导入建表脚本（quant.sql）
 mysql -uroot -p quant < quant.sql
 
 ## 3) 复制并编辑 .env（将示例变量替换为你的本地配置）
