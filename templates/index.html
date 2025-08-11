@@ -1,0 +1,798 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <title>量化策略</title>
+  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    .log-entry    { font-size: 0.85rem; color: gray; }
+    .log-short    { color: red; font-weight: bold; }
+    .log-long     { color: green;   font-weight: bold; }
+    .section      { margin-bottom: 2rem; }
+    .box-container{ max-height: 200px; overflow-y: auto; }
+    /* Gate.io风格K线图样式 - 增强版 */
+    .gate-kline {
+      background-color: #f8f9fa;
+      border-radius: 4px;
+      border: 1px solid #dee2e6;
+      position: relative;
+    }
+    .gate-price-line {
+      stroke: #2962FF;
+      stroke-width: 1.5;
+      stroke-dasharray: 2, 2;
+    }
+    .price-up { color: #0ECB81; }
+    .price-down { color: #F6465D; }
+    .price-normal { color: #2962FF; }
+    
+    /* 增强图表样式 */
+    .plot-container .main-svg {
+      border-radius: 4px;
+    }
+    .yaxislayer-above {
+      right: 0 !important;
+      left: auto !important;
+    }
+    .xtick, .ytick {
+      font-size: 10px !important;
+    }
+    
+    /* 优化布局 */
+    .log-container {
+      display: flex;
+      gap: 15px;
+    }
+    .log-panel {
+      flex: 1;
+      min-width: 0;
+    }
+    
+    /* 隐藏modebar按钮 */
+    .modebar-container { display: none !important; }
+    
+    /* 美化价格标签 */
+    .price-label-container {
+      position: absolute;
+      right: 0;
+      z-index: 100;
+      padding: 4px 8px;
+      background: rgba(255, 255, 255, 0.9);
+      border-radius: 4px;
+      font-weight: bold;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+      border-left: 3px solid #2962FF;
+      display: flex;
+      align-items: center;
+      font-size: 12px;
+      transform: translateY(-50%);
+    }
+  </style>
+</head>
+<body class="container-fluid py-3">
+
+  <!-- ========== 策略列表 ========== -->
+  {% for s in strategies %}
+  <div class="card section">
+    <div class="card-body">
+      <!-- 配置表单 -->
+      <form method="post" class="row g-2 align-items-end">
+        <input type="hidden" name="strategy_id" value="{{ s.strategy_id }}">
+        <div class="col-12 col-md-1">
+          <label class="form-label">策略</label>
+          <div class="form-control form-control-sm bg-light">{{ s.strategy_id }}</div>
+        </div>
+        <div class="col-6 col-sm-4 col-md-1">
+          <label class="form-label">K线周期</label>
+          <select name="interval" class="form-select form-select-sm">
+            {% for opt in ["1m","5m","15m"] %}
+            <option value="{{ opt }}" {% if opt==s.interval %}selected{% endif %}>{{ opt }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-6 col-sm-4 col-md-1">
+          <label class="form-label">杠杆</label>
+          <input type="number" name="leverage" class="form-control form-control-sm" value="{{ s.leverage }}">
+        </div>
+        <div class="col-6 col-sm-4 col-md-1">
+          <label class="form-label">开仓量</label>
+          <input type="number" name="position_size" class="form-control form-control-sm" value="{{ s.position_size }}">
+        </div>
+        <div class="col-6 col-sm-4 col-md-1">
+          <label class="form-label">最大持仓</label>
+          <input type="number" name="max_positions" class="form-control form-control-sm" value="{{ s.max_positions }}">
+        </div>
+        <div class="col-6 col-sm-4 col-md-1">
+          <label class="form-label">止盈%</label>
+          <input type="number" step="0.1" name="take_profit_percent" class="form-control form-control-sm" value="{{ s.take_profit_percent }}">
+        </div>
+        <div class="col-6 col-sm-4 col-md-1">
+          <label class="form-label">止损%</label>
+          <input type="number" step="0.1" name="stop_loss_percent" class="form-control form-control-sm" value="{{ s.stop_loss_percent }}">
+        </div>
+        <div class="col-6 col-sm-4 col-md-1">
+          <label class="form-label">RSI周期</label>
+          <input type="number" name="rsi_period" class="form-control form-control-sm" value="{{ s.rsi_period }}">
+        </div>
+        <div class="col-6 col-sm-4 col-md-1">
+          <label class="form-label">平滑期</label>
+          <input type="number" name="rsi_acc_period" class="form-control form-control-sm" value="{{ s.rsi_acc_period }}">
+        </div>
+        <div class="col-6 col-sm-4 col-md-1">
+          <label class="form-label">多阈</label>
+          <input type="number" step="0.1" name="rsi_long_threshold" class="form-control form-control-sm" value="{{ s.rsi_long_threshold }}">
+        </div>
+        <div class="col-6 col-sm-4 col-md-1">
+          <label class="form-label">空阈</label>
+          <input type="number" step="0.1" name="rsi_short_threshold" class="form-control form-control-sm" value="{{ s.rsi_short_threshold }}">
+        </div>
+        <div class="col-12 col-md-1">
+          {% if s.running %}
+          <button name="stop"  class="btn btn-danger w-100 btn-sm">停止策略</button>
+          {% else %}
+          <button name="start" class="btn btn-success w-100 btn-sm">启动策略</button>
+          {% endif %}
+        </div>
+      </form>
+
+      <!-- 图表区域 -->
+      <div class="mt-3 gate-kline position-relative">
+        <!-- K线图容器 -->
+        <div id="chart_{{ s.strategy_id }}" class="w-100" style="height:500px;"></div>
+      </div>
+
+      <!-- 日志/平仓 - 调整为各占一半宽度 -->
+      <div class="log-container mt-3">
+        <div class="log-panel">
+          <div id="log_{{ s.strategy_id }}" class="box-container border rounded p-2"></div>
+        </div>
+        <div class="log-panel">
+          <div id="closures_{{ s.strategy_id }}" class="box-container border rounded p-2"></div>
+        </div>
+      </div>
+
+      <!-- ========== 订单数据汇总 ========== -->
+      <div class="row text-center mb-4">
+        <div class="col-6 col-md-3">
+          <div class="fw-bold small" id="sum_pnl">--</div>
+          <div class="text-muted fw-bold small">累计收益</div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="fw-bold small" id="sum_total">--</div>
+          <div class="text-muted fw-bold small">总订单数</div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="fw-bold small" id="sum_closed">--</div>
+          <div class="text-muted fw-bold small">已平仓</div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="fw-bold small" id="sum_winrate">--</div>
+          <div class="text-muted fw-bold small">胜率</div>
+        </div>
+      </div>
+
+      <!-- 订单列表 -->
+      <div class="mt-3 table-responsive" style="max-height: 300px; overflow-y: auto;" id="orders_{{ s.strategy_id }}"></div>
+
+    </div>
+  </div>
+  {% endfor %}
+
+  <!-- ========== 脚本区 ========== -->
+  <script>
+    // 所有策略 ID 列表
+    const strategyIds = [
+      {% for s in strategies %}'{{ s.strategy_id }}',{% endfor %}
+    ];
+
+    // —— 实时汇总
+    function refreshSummary(){
+      let totalTrades=0, closedTrades=0, winCount=0, totalPnl=0;
+      const fetches = strategyIds.map(id =>
+        fetch(`/trades/${id}`).then(r=>r.ok? r.json():[])
+      );
+      Promise.all(fetches).then(allRows=>{
+        allRows.forEach(rows=>{
+          rows.forEach(r=>{
+            totalTrades++;
+            const pnl = parseFloat(r.pnl) || 0;
+            totalPnl += pnl;
+            if(r.status === 'closed'){
+              closedTrades++;
+              if(pnl>0) winCount++;
+            }
+          });
+        });
+        const winrate = closedTrades
+          ? ( (winCount/closedTrades)*100 ).toFixed(2) + '%'
+          : '--';
+        document.getElementById('sum_total').innerText   = totalTrades;
+        document.getElementById('sum_closed').innerText  = closedTrades;
+        document.getElementById('sum_pnl').innerText     = (totalPnl>=0?'+':'') + totalPnl.toFixed(2);
+        document.getElementById('sum_winrate').innerText = winrate;
+      }).catch(console.error);
+    }
+    refreshSummary();
+
+
+    {% for s in strategies %}
+    (function(){
+      const strategyId = '{{ s.strategy_id }}';
+      const symbol     = '{{ s.symbol }}';
+      const interval   = '{{ s.interval }}';
+      const chartId    = `chart_${strategyId}`;
+      const logId      = `log_${strategyId}`;
+      const closuresId = `closures_${strategyId}`;
+      const ordersId   = `orders_${strategyId}`;
+
+      // 最新价格和K线数据
+      let lastPrice = null;
+      let klineData = [];
+      let chartInitialized = false;
+      let lastPriceChange = null; // 保存上一次价格用于比较
+      let priceLabelElement = null; // 用于存储价格标签DOM元素
+      let gateLayout = null; // 将布局对象提升到函数作用域
+
+      // Gate.io风格图表配置 - 增强版
+      const createGateLayout = () => {
+        return {
+          autosize: true,
+          margin: { t: 10, b: 50, l: 10, r: 60 }, // 增加右侧空间
+          xaxis: {
+            type: "date",
+            tickformat: "%H:%M",
+            tickmode: "auto",
+            nticks: 20,
+            ticks: "outside",
+            tickfont: { size: 10 },
+            rangeslider: { visible: false },
+            ticklabelmode: "instant",
+            showgrid: true,
+            gridcolor: '#f0f0f0',
+            zeroline: false
+          },
+          grid: {
+            rows: 2,
+            columns: 1,
+            pattern: 'independent',  // 独立Y轴
+            rowheights: [0.7, 0.3]   // 主图占70%，副图占30%
+          },
+          yaxis: {
+            domain: [0.3, 1], 
+            tickmode: "auto",
+            nticks: 10,
+            domain: [0, 1],
+            showspikes: true,
+            spikemode: 'across',
+            spikecolor: '#2962FF',
+            spikethickness: 1,
+            spikedash: 'dot',
+            showgrid: true,
+            gridcolor: '#f0f0f0',
+            zeroline: false,
+            side: 'right', // 将价格刻度放在右侧
+            fixedrange: true,
+            position: 1 // 确保刻度显示在右侧
+          },
+          yaxis2: {
+            domain: [0, 0.25],
+            title: '平滑RSI',
+            showgrid: true,
+            zeroline: true,
+            showline: true,
+            range: [0, 100],  // RSI范围固定0-100
+            tickvals: [0, 30, 50, 70, 100],
+            gridcolor: '#f0f0f0',
+            side: 'right'
+          },
+          shapes: [],
+          annotations: [],
+          plot_bgcolor: '#ffffff',
+          paper_bgcolor: '#f8f9fa',
+          hovermode: 'x unified',
+          showlegend: false,
+          dragmode: 'pan',
+          hoverdistance: 50,
+          spikedistance: 50
+        };
+      };
+
+      // 创建价格标签
+      function createPriceLabel() {
+        if (priceLabelElement) {
+          priceLabelElement.remove();
+        }
+        priceLabelElement = document.createElement('div');
+        priceLabelElement.className = 'price-label-container';
+        priceLabelElement.innerHTML = `
+          <span class="price-label">$</span>
+          <span class="price-value">--</span>
+          <span class="price-arrow"></span>
+        `;
+        document.getElementById(chartId).parentNode.appendChild(priceLabelElement);
+      }
+
+      // 初始化图表 - 增强版
+      function initChart(){
+        // 获取策略配置的阈值
+        const longThreshold = parseFloat("{{ s.rsi_long_threshold }}") || 20;
+        const shortThreshold = parseFloat("{{ s.rsi_short_threshold }}") || 80;
+        
+        fetch(`/kline/${symbol}/${interval}?rsi_period={{ s.rsi_period }}&rsi_acc_period={{ s.rsi_acc_period }}`)
+          .then(r => {
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            return r.text(); // 先获取文本
+          })
+          .then(text => {
+            // 清洗NaN值
+            const cleanedText = text.replace(/NaN/g, 'null');
+            return JSON.parse(cleanedText);
+          })
+          .then(data => {
+            if (!data.length) return;
+            klineData = data;
+            const t = data.map(d => d.t);
+            const o = data.map(d => +d.o);
+            const h = data.map(d => +d.h);
+            const l = data.map(d => +d.l);
+            const c = data.map(d => +d.c);
+            
+            // 计算y轴范围
+            const low = Math.min(...l);
+            const high = Math.max(...h);
+            const rangePadding = (high - low) * 0.05;
+            const yRange = [low - rangePadding, high + rangePadding];
+            
+            // Gate.io风格K线：涨为绿，跌为红
+            const klineTrace = {
+              x: t,
+              open: o,
+              high: h,
+              low: l,
+              close: c,
+              type: 'candlestick',
+              name: 'K线',
+              increasing: { 
+                line: { color: '#0ECB81', width: 1.5 },
+                fillcolor: 'rgba(14, 203, 129, 0.4)' 
+              },
+              decreasing: { 
+                line: { color: '#F6465D', width: 1.5 },
+                fillcolor: 'rgba(246, 70, 93, 0.4)' 
+              },
+              whiskerwidth: 0.8,
+              hoverinfo: 'x+y'
+            };
+            
+            // 添加RSI副图
+            const rsiTrace = {
+              x: t,
+              y: data.map(d => d.rsi_acc || null),
+              type: 'scatter',
+              mode: 'lines',
+              name: '平滑RSI',
+              line: { color: '#2962FF', width: 1.5 },
+              yaxis: 'y2'
+            };
+            
+            // 创建布局
+            gateLayout = {
+              autosize: true,
+              margin: { t: 10, b: 50, l: 10, r: 60 },
+              grid: {
+                rows: 2,
+                columns: 1,
+                pattern: 'independent',
+                rowheights: [0.7, 0.3]
+              },
+              xaxis: {
+                type: "date",
+                tickformat: "%H:%M",
+                tickmode: "auto",
+                nticks: 20,
+                ticks: "outside",
+                tickfont: { size: 10 },
+                rangeslider: { visible: false },
+                ticklabelmode: "instant",
+                showgrid: true,
+                gridcolor: '#f0f0f0',
+                zeroline: false
+              },
+              yaxis: {
+                tickmode: "auto",
+                nticks: 10,
+                domain: [0.3, 1],
+                showspikes: true,
+                spikemode: 'across',
+                spikecolor: '#2962FF',
+                spikethickness: 1,
+                spikedash: 'dot',
+                showgrid: true,
+                gridcolor: '#f0f0f0',
+                zeroline: false,
+                side: 'right',
+                fixedrange: true,
+                position: 1,
+                range: yRange
+              },
+              yaxis2: {
+                domain: [0, 0.25],
+                title: '平滑RSI',
+                showgrid: true,
+                zeroline: true,
+                showline: true,
+                range: [0, 100],
+                tickvals: [0, longThreshold, 50, shortThreshold, 100],
+                gridcolor: '#f0f0f0',
+                side: 'right'
+              },
+              shapes: [
+                // 添加阈值参考线 - 在前端绘制
+                {
+                  type: 'line',
+                  xref: 'paper',
+                  yref: 'y2',
+                  x0: 0,
+                  x1: 1,
+                  y0: longThreshold,
+                  y1: longThreshold,
+                  line: {
+                    color: '#0ECB81',
+                    width: 1,
+                    dash: 'dash'
+                  },
+                  name: '多头阈值'
+                },
+                {
+                  type: 'line',
+                  xref: 'paper',
+                  yref: 'y2',
+                  x0: 0,
+                  x1: 1,
+                  y0: shortThreshold,
+                  y1: shortThreshold,
+                  line: {
+                    color: '#F6465D',
+                    width: 1,
+                    dash: 'dash'
+                  },
+                  name: '空头阈值'
+                }
+              ],
+              annotations: [],
+              plot_bgcolor: '#ffffff',
+              paper_bgcolor: '#f8f9fa',
+              hovermode: 'x unified',
+              showlegend: false,
+              dragmode: 'pan',
+              hoverdistance: 50,
+              spikedistance: 50
+            };
+            
+            // 创建图表
+            Plotly.newPlot(chartId, [klineTrace, rsiTrace], gateLayout, {
+              responsive: true,
+              displayModeBar: false,
+              displaylogo: false
+            }).then(() => {
+              chartInitialized = true;
+              createPriceLabel();
+              
+              if (lastPrice !== null) {
+                addPriceLine(lastPrice);
+              }
+            });
+          })
+          .catch(error => {
+            console.error('K线数据获取失败:', error);
+            // 显示错误信息
+            document.getElementById(chartId).innerHTML = 
+              `<div class="alert alert-danger">数据加载失败: ${error.message}</div>`;
+          });
+      }
+
+      // 添加实时价格线 - 修复位置问题
+      function addPriceLine(price) {
+        if (!chartInitialized || !priceLabelElement) return;
+        
+        const layout = JSON.parse(JSON.stringify(gateLayout));
+        
+        // 更新价格标签
+        const priceValue = priceLabelElement.querySelector('.price-value');
+        priceLabelElement.classList.remove('price-up', 'price-down', 'price-normal');
+        priceLabelElement.style.borderLeftColor = '#2962FF';
+        priceValue.textContent = price.toFixed(2);
+        
+        // 设置价格变化样式
+        if (lastPriceChange !== null) {
+          if (price > lastPriceChange) {
+            priceLabelElement.classList.add('price-up');
+            priceLabelElement.style.borderLeftColor = '#0ECB81';
+          } else if (price < lastPriceChange) {
+            priceLabelElement.classList.add('price-down');
+            priceLabelElement.style.borderLeftColor = '#F6465D';
+          }
+        }
+        
+        // 定位价格标签 - 使用相对位置计算
+        const chartElement = document.getElementById(chartId);
+        const plotContainer = chartElement.querySelector('.plot-container');
+        if (!plotContainer) return;
+        
+        // 获取图表容器的位置和尺寸
+        const containerRect = chartElement.parentNode.getBoundingClientRect();
+        const plotRect = plotContainer.getBoundingClientRect();
+        
+        // 计算相对位置 - 相对于图表容器
+        const relativeTop = plotRect.top - containerRect.top;
+        const plotHeight = plotRect.height;
+        
+        // 获取y轴范围
+        const yRange = gateLayout.yaxis.range || [0, 1]; 
+        
+        // 计算价格在y轴上的比例位置
+        const yScale = (price - yRange[0]) / (yRange[1] - yRange[0]);
+        // 计算标签的top位置（从图表容器顶部开始计算）
+        const yPos = relativeTop + plotHeight * (1 - yScale);
+        
+        priceLabelElement.style.top = `${yPos}px`;
+        priceLabelElement.style.right = '0px';
+        
+        // 更新图表上的价格线
+        layout.shapes = layout.shapes.filter(s => s.name !== 'price-line');
+        layout.shapes.push({
+          type: 'line',
+          xref: 'paper',
+          yref: 'y',
+          x0: 0,
+          x1: 1,
+          y0: price,
+          y1: price,
+          line: { color: '#2962FF', width: 1.5, dash: 'dot' },
+          name: 'price-line'
+        });
+        
+        Plotly.relayout(chartId, layout);
+      }
+
+      // 更新实时价格
+      function refreshPrice(){
+        fetch(`/api/ticker/${symbol}`)
+          .then(r=>r.json())
+          .then(data=>{
+            const price = parseFloat(data.last);
+            // 保存上一次价格用于比较
+            lastPriceChange = lastPrice;
+            lastPrice = price;
+            
+            // 添加/更新价格线
+            if (chartInitialized) {
+              addPriceLine(price);
+            }
+          })
+          .catch(error => console.error('更新价格失败:', error));
+      }
+
+      // 更新图表
+      function refreshChart(){
+        const longThreshold = parseFloat("{{ s.rsi_long_threshold }}") || 35;
+        const shortThreshold = parseFloat("{{ s.rsi_short_threshold }}") || 65;
+      
+        fetch(`/kline/{{ s.symbol }}/{{ s.interval }}?rsi_period={{ s.rsi_period }}&rsi_acc_period={{ s.rsi_acc_period }}`)
+          .then(r => r.ok ? r.text() : Promise.reject(r))
+          .then(text => JSON.parse(text.replace(/NaN/g, 'null')))
+          .then(data => {
+            if (!data.length) return;
+            klineData = data;
+      
+            const t = data.map(d => d.t);
+            const o = data.map(d => +d.o);
+            const h = data.map(d => +d.h);
+            const l = data.map(d => +d.l);
+            const c = data.map(d => +d.c);
+            const rsi = data.map(d => d.rsi_acc || null);
+      
+            // 计算y轴范围
+            const low = Math.min(...l);
+            const high = Math.max(...h);
+            const rangePadding = (high - low) * 0.05;
+            const yRange = [low - rangePadding, high + rangePadding];
+      
+            // 分别更新 trace
+            Plotly.restyle(chartId, {
+              x: [t],
+              open: [o],
+              high: [h],
+              low: [l],
+              close: [c]
+            }, [0]); // 第0个 trace 是 candlestick
+      
+            Plotly.restyle(chartId, {
+              x: [t],
+              y: [rsi]
+            }, [1]); // 第1个 trace 是 RSI
+      
+            // 更新 layout
+            Plotly.relayout(chartId, {
+              'yaxis.range': yRange,
+              'yaxis2.range': [0, 100],
+              shapes: [
+                {
+                  type: 'line',
+                  xref: 'paper',
+                  yref: 'y2',
+                  x0: 0,
+                  x1: 1,
+                  y0: longThreshold,
+                  y1: longThreshold,
+                  line: {
+                    color: '#0ECB81',
+                    width: 1,
+                    dash: 'dash'
+                  }
+                },
+                {
+                  type: 'line',
+                  xref: 'paper',
+                  yref: 'y2',
+                  x0: 0,
+                  x1: 1,
+                  y0: shortThreshold,
+                  y1: shortThreshold,
+                  line: {
+                    color: '#F6465D',
+                    width: 1,
+                    dash: 'dash'
+                  }
+                }
+              ]
+            });
+      
+            // 更新价格线
+            if (lastPrice !== null) {
+              addPriceLine(lastPrice);
+            }
+          })
+          .catch(error => {
+            console.error('K线数据获取失败:', error);
+            document.getElementById(chartId).innerHTML = 
+              `<div class="alert alert-danger">数据加载失败: ${error.message}</div>`;
+          });
+      }
+      
+
+      // 更新日志
+      function refreshLogs(){
+        const el = document.getElementById(logId);
+        if(!el || window.getComputedStyle(el).display==='none') return;
+        fetch(`/logs/${strategyId}`)
+          .then(r=>r.json())
+          .then(logs=>{
+            el.innerHTML = logs.map(l=>{
+              let cls='log-entry';
+              if(l.message.includes('做多')) cls+=' log-long';
+              if(l.message.includes('做空')) cls+=' log-short';
+              return `<div class="${cls}">${l.time}｜${l.message}</div>`;
+            }).join('');
+          })
+          .catch(error => console.error('更新日志失败:', error));
+      }
+
+      // 更新平仓
+      function refreshClosures(){
+        const el = document.getElementById(closuresId);
+        if(!el || window.getComputedStyle(el).display==='none') return;
+        fetch(`/closures/${strategyId}`)
+          .then(r=>r.json())
+          .then(rows=>{
+            el.innerHTML = rows.map(rp=>{
+              let cls='log-entry', arrow='';
+              if(rp.reason==='tp'){ cls+=' log-long'; }
+              else               { cls+=' log-short'; }
+              const close_price = rp.close_price!=null?rp.close_price:'未记录';
+              const pnl   = rp.pnl  !=null?rp.pnl:'未知';
+              return `<div class="${cls}">[${rp.reason==='tp'?'止盈':'止损'}] 平仓价=${close_price} ｜ 盈亏=${pnl}</div>`;
+            }).join('');
+          })
+          .catch(error => console.error('更新平仓记录失败:', error));
+      }
+
+      // 更新订单列表
+      function refreshOrders(){
+        const el = document.getElementById(ordersId);
+        fetch(`/trades/${strategyId}`)
+          .then(r=>r.json())
+          .then(rows=>{
+            if(!rows || !rows.length){
+              el.innerHTML="<div class='text-muted'>暂无订单</div>";
+              return;
+            }
+            let html=`<table class='table table-sm table-bordered text-center align-middle'>
+              <thead class='table-light'><tr>
+                <th>方向</th><th>开仓价</th><th>平仓价</th><th>数量</th><th>杠杆</th>
+                <th>盈亏</th><th>状态</th><th>开仓时间</th><th>平仓时间</th>
+              </tr></thead><tbody>`;
+            rows.forEach(r=>{
+              const side = r.signal.toLowerCase()==='long'
+                ?'<span class="badge bg-success">做多</span>'
+                :'<span class="badge bg-danger">做空</span>';
+              let pnlVal = '-';
+              let pnlCls = '';
+              if (r.pnl !== null && r.pnl !== '-' && !isNaN(parseFloat(r.pnl))) {
+                const pnl = parseFloat(r.pnl);
+                pnlVal = pnl.toFixed(2);
+                pnlCls = pnl > 0 ? 'text-success' : (pnl < 0 ? 'text-danger' : '');
+              }
+              let status='持仓中', sc='info';
+              if(r.status==='closed'){
+                if(parseFloat(r.pnl)<0){ status='亏损平仓'; sc='danger'; }
+                else                   { status='盈利平仓'; sc='success'; }
+              }
+              html+=`<tr>
+                <td>${side}</td>
+                <td>${r.open_price||'-'}</td>
+                <td>${r.close_price||'-'}</td>
+                <td>${r.size||'-'}</td>
+                <td>${r.leverage||'-'}</td>
+                <td class="${pnlCls}">${pnlVal}</td>
+                <td><span class="badge bg-${sc}">${status}</span></td>
+                <td>${r.open_time||'-'}</td>
+                <td>${r.close_time||'-'}</td>
+              </tr>`;
+            });
+            html+='</tbody></table>';
+            el.innerHTML=html;
+          })
+          .catch(error => console.error('更新订单失败:', error));
+      }
+
+      // 启动 & 定时刷新
+      function safeInterval(fn, delay) {
+        let running = false;
+        setInterval(async () => {
+          if (running) return;
+          running = true;
+          try {
+            await fn();
+          } catch (e) {
+            console.error(e);
+          } finally {
+            running = false;
+          }
+        }, delay);
+      }
+      
+      // 首次立即执行
+      refreshPrice(); // 先获取最新价格
+      initChart();
+      refreshSummary();
+      refreshLogs();
+      refreshClosures();
+      refreshOrders();
+      
+      // 安全定时器 - 确保刷新频率正确
+      safeInterval(refreshSummary, 30000);
+      safeInterval(refreshChart, 30000);
+      safeInterval(refreshLogs, 15000);
+      safeInterval(refreshClosures, 20000);
+      safeInterval(refreshOrders, 25000);
+      safeInterval(refreshPrice, 5000);
+      
+      // 窗口变化自适应
+      window.addEventListener('resize', ()=>{
+        if (chartInitialized) {
+          Plotly.Plots.resize(document.getElementById(chartId)).then(() => {
+            // 重新定位价格标签
+            if (lastPrice !== null) {
+              addPriceLine(lastPrice);
+            }
+          });
+        }
+      });
+    })();
+    {% endfor %}
+  </script>
+</body>
+</html>
